@@ -236,7 +236,6 @@ class VidODE(nn.Module):
             last_frame = warped_x.clone()
         
         return pred_x
-    
     def compute_all_losses(self, batch_dict):
         
         batch_dict["tp_to_predict"] = batch_dict["tp_to_predict"].to(self.device)
@@ -265,11 +264,12 @@ class VidODE(nn.Module):
 
         data = torch.cat([init_image.unsqueeze(1), batch_dict["data_to_predict"]], dim=1)
         data_diff = self.get_diff(data=data, mask=batch_dict["mask_predicted_data"])
-
-        loss = loss + torch.mean(self.get_mse(truth=data_diff, pred_x=extra_info["pred_intermediates"], mask=None))
+        diff_loss = 0.0
+        diff_loss = torch.mean(self.get_mse(truth=data_diff, pred_x=extra_info["pred_intermediates"], mask=None))
+        loss = loss + diff_loss
 
         results = {}
         results["loss"] = torch.mean(loss)
         results["pred_y"] = pred_x
-        
+        results['diff_loss'] = diff_loss
         return results
