@@ -15,7 +15,7 @@ from models.gan import *
 from tester import Tester
 import utils
 import visualize
-
+import wandb
 
 def get_opt():
     parser = argparse.ArgumentParser()
@@ -128,6 +128,7 @@ def main():
 
 
 def train(opt, netG, loader_objs, device):
+    wandb.init(project="vid-ode", name=opt.name)
     # Optimizer
     optimizer_netG = optim.Adamax(netG.parameters(), lr=opt.lr)
     
@@ -153,7 +154,8 @@ def train(opt, netG, loader_objs, device):
             
             res = netG.compute_all_losses(batch_dict)
             loss_netG = res["loss"]
-            
+            diff_loss = res["diff_loss"].item()
+            res_loss = loss_netG.item()
             # Compute Adversarial Loss
             real = batch_dict["data_to_predict"]
             fake = res["pred_y"]
@@ -169,22 +171,28 @@ def train(opt, netG, loader_objs, device):
                 input_real = input_real[observed_mask.squeeze(-1).byte(), ...].view(b, selected_timesteps, c, h, w)
                 real = real[mask_predicted_data.squeeze(-1).byte(), ...].view(b, selected_timesteps, c, h, w)
 
-            loss_netD = opt.lamb_adv * netD_seq.netD_adv_loss(real, fake, input_real)
-            loss_netD += opt.lamb_adv * netD_img.netD_adv_loss(real, fake, None)
+            netD_seq_loss = netD_seq.netD_adv_loss(real, fake, input_real)
+            netD_img_loss = netD_img.netD_adv_loss(real, fake, None)
+            loss_netD = opt.lamb_adv * netD_seq_loss
+            loss_netD += opt.lamb_adv * netD_img_loss
 
-            loss_adv_netG = opt.lamb_adv * netD_seq.netG_adv_loss(fake, input_real)
-            loss_adv_netG += opt.lamb_adv * netD_img.netG_adv_loss(fake, None)
+            netG_seq_loss = netD_seq.netG_adv_loss(fake, input_real)
+            netG_img_loss = netD_img.netG_adv_loss(fake, None)
+            loss_adv_netG = opt.lamb_adv * netG_seq_loss
+            loss_adv_netG += opt.lamb_adv *netG_img_loss
             loss_netG += loss_adv_netG
+            
+            # Train G
+            optimizer_netG.zero_grad()
+            loss_netG.backward()
+            optimizer_netG.step()
 
             # Train D
             optimizer_netD.zero_grad()
             loss_netD.backward()
             optimizer_netD.step()
             
-            # Train G
-            optimizer_netG.zero_grad()
-            loss_netG.backward()
-            optimizer_netG.step()
+            wandb.log({'mse_loss': res_loss-diff_loss, 'diff_loss': diff_loss, 'loss_netG_seq': netG_seq_loss.item(), 'loss_netG_img': netG_img_loss.item(), 'loss_netD_seq': netD_seq_loss.item(), 'loss_netD_img': netD_img_loss.item(), 'total_loss': loss_netG.item()})
             
             if (total_step + 1) % opt.log_print_freq == 0 or total_step == 0:
                 et = time.time() - start_time
